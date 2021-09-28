@@ -2,51 +2,58 @@ name: "Code scanning - action"
 
 on:
   push:
-  pull_request:
-  schedule:
-    - cron: "0 19 * * 0"
 
 jobs:
-  CodeQL-Build:
-    # CodeQL runs on ubuntu-latest and windows-latest
-    runs-on: ubuntu-latest
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - 'ubuntu-20.04'
+        py:
+          - '3.8'
+        arch:
+          - 'x64'
+    runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
-        # with:
-        #  # We must fetch at least the immediate parents so that if this is
-        #  # a pull request then we can checkout the head.
-        #  fetch-depth: 2
-
-      # # If this run was triggered by a pull request event, then checkout
-      # # the head of the pull request instead of the merge commit.
-      # - run: git checkout HEAD^2
-      #   if: ${{ github.event_name == 'pull_request' }}
-
-      # Initializes the CodeQL tools for scanning.
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v1
-        # Override language selection by uncommenting this and choosing your languages
-        # Supported languages: go, javascript, csharp, python, cpp, java
+      - name: Set up Python
+        uses: actions/setup-python@v2
         with:
-          languages: python
+          python-version: ${{ matrix.py }}
+          architecture: ${{ matrix.arch }}
 
-      # Autobuild attempts to build any compiled languages  (C/C++, C#, or Java).
-      # If this step fails, then you should remove it and run the build manually (see below)
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v1
+      - uses: actions/checkout@v2
 
-      # ℹ️ Command-line programs to run using the OS shell.
-      # 📚 https://git.io/JvXDl
-
-      # ✏️ If the Autobuild fails above, remove it and uncomment the following three lines
-      #    and modify them (or add more) to build your code if your project
-      #    uses a compiled language
-
-      #- run: |
-      #   make bootstrap
-      #   make release
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v1
+      - name: Install Dependencies
+        run: |
+          sudo apt-get -y install gdb
+          sudo sysctl kernel.yama.ptrace_scope=0
+          sudo pip install -U pip setuptools tox tox-travis
+      - name: Test 
+        run: |
+          sudo tox -- -n4 -v
+  
+  armv64_job:
+      name: Build and Test for arm64
+      runs-on: ubuntu-20.04
+      steps:
+        - uses: actions/checkout@v2
+        - name: Set up QEMU
+          id: qemu
+          uses: docker/setup-qemu-action@v1
+        - name: Install and Run tests
+          run: |
+            docker run --rm -v ${{ github.workspace }}:/ws:rw --workdir=/ws \
+              arm64v8/ubuntu:20.04 \
+              bash -exc 'apt-get update && apt-get -y install python3 python3-pip python3-venv curl && \
+              python3 -m pip install virtualenv && python3 -m venv py38-venv && \
+              source py38-venv/bin/activate && \
+              
+              ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime && export DEBIAN_FRONTEND=noninteractive && apt-get install -y tzdata && dpkg-reconfigure --frontend noninteractive tzdata && \
+              apt-get -y install gdb && \
+              sysctl kernel.yama.ptrace_scope=0 && \
+              pip install -U pip setuptools tox tox-travis && \
+              tox -e py38 && \
+ 
+              deactivate'
